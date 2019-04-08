@@ -1,5 +1,5 @@
 {
 	"addr":":8001",
 	"min_required_version":60,
-	"fs_path":"/root/work/src/github.com/prcela/arena/static"
+	"fs_path":"/root/work/ArenaWeb"
 }
