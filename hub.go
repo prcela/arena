@@ -265,6 +265,7 @@ func (hub *Hub) resendMissedMessages(playerID string, missedMessages []MissedMes
 
 // ServeWs handles websocket requests from the peer.
 func (hub *Hub) ServeWs(w http.ResponseWriter, r *http.Request) {
+	log.Println("ServeWs")
 	upgrader.CheckOrigin = func(r *http.Request) bool { return true }
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
