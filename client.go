@@ -3,7 +3,8 @@ package main
 import (
 	"log"
 	"time"
-
+	"encoding/json"
+	"github.com/fatih/color"
 	"github.com/gorilla/websocket"
 )
 
@@ -40,6 +41,7 @@ var upgrader = websocket.Upgrader{
 // Client is a middleman between the websocket connection and the hub.
 type Client struct {
 	playerID     string
+	gameId *string
 	wasConnected bool
 	version      int // implementirano u verziji 54
 	deviceUUID   *string
@@ -75,7 +77,35 @@ func (c *Client) readPump() {
 }
 
 func (c *Client) processMessage(message []byte) {
+	var dic map[string]interface{}
+	if err := json.Unmarshal(message, &dic); err != nil {
+		panic(err)
+	}
+	log.Println(dic)
+
+	if dic["msg_num"] == nil {
+		dic["msg_num"] = float64(newMsgNum())
+	} else {
+		log.Println("msg_num is not nil")
+	}
+
+	color.Magenta("%v", dic)
+
+	js, err := json.Marshal(dic)
+	if err != nil {
+		panic(err)
+	}
+
+	action := &Action{
+		name:         dic["msg_func"].(string),
+		message:      js,
+		fromPlayerID: c.playerID,
+		msgNum:       int32(dic["msg_num"].(float64)),
+	}
+	
+	c.hub.chAction <- action
 }
+
 
 // writePump pumps messages from the hub to the websocket connection.
 //

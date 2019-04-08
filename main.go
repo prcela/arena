@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"gopkg.in/mgo.v2"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
@@ -15,7 +16,7 @@ func loadConfiguration() Config {
 	if runtime.GOOS == "darwin" {
 		file = "configDev.json"
 	} else {
-		file = "/home/prcela/work/src/github.com/prcela/kolo/configProd.json"
+		file = "/home/prcela/work/src/github.com/prcela/arena/configProd.json"
 	}
 	var config Config
 	configFile, err := os.Open(file)
@@ -38,13 +39,27 @@ func main() {
 
 	config := loadConfiguration()
 
+	log.Println("mgo.Dial...")
+	session, sessionErr = mgo.Dial("localhost:27017")
+	if sessionErr != nil {
+		panic(sessionErr)
+	}
+	// Optional. Switch the session to a monotonic behavior.
+	session.SetMode(mgo.Monotonic, true)
+	defer session.Close()
+
 	arena := newArena()
+
+	arena.games["mlin"] = &MlinGame{}
 	go arena.hub.run(config)
 
 	http.HandleFunc("/chat", func(w http.ResponseWriter, req *http.Request) {
 		log.Println("request", req)
 		arena.hub.ServeWs(w, req)
 	})
+
+	fs := http.FileServer(http.Dir(config.FsPath))
+	http.Handle("/static/", http.StripPrefix("/static", fs))
 
 	http.HandleFunc("/info", func(w http.ResponseWriter, req *http.Request) {
 

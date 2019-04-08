@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"github.com/fatih/color"
-	"gopkg.in/mgo.v2"
 	"gopkg.in/mgo.v2/bson"
 	"log"
 	"net/http"
@@ -13,13 +12,14 @@ import (
 
 // hub maintains the set of active clients and broadcasts messages to the clients.
 type Hub struct {
+	arena   *Arena
 	clients map[*Client]bool
-	players map[string]*Player
 
 	chRegisterClient   chan *Client
 	chUnregisterClient chan *Client
 	chWaitClient       chan *Client
 
+	chAction             chan *Action
 	chBroadcastAll       chan []byte
 	chBroadcast          chan Broadcast
 	chProcessDiff        chan bool
@@ -29,13 +29,14 @@ type Hub struct {
 	differ          *RoomDiffer
 }
 
-func newHub() *Hub {
+func newHub(arena *Arena) *Hub {
 	return &Hub{
+		arena:                arena,
 		clients:              make(map[*Client]bool),
-		players:              make(map[string]*Player),
 		chRegisterClient:     make(chan *Client),
 		chUnregisterClient:   make(chan *Client),
 		chWaitClient:         make(chan *Client),
+		chAction:             make(chan *Action),
 		chBroadcastAll:       make(chan []byte, 256),
 		chBroadcast:          make(chan Broadcast, 256),
 		chProcessDiff:        make(chan bool, 256),
@@ -48,14 +49,6 @@ func newHub() *Hub {
 func (hub *Hub) run(config Config) {
 	log.Println("Hub run")
 
-	session, sessionErr = mgo.Dial("localhost:27017")
-	if sessionErr != nil {
-		panic(sessionErr)
-	}
-	// Optional. Switch the session to a monotonic behavior.
-	session.SetMode(mgo.Monotonic, true)
-	defer session.Close()
-
 	for {
 		select {
 		case client := <-hub.chRegisterClient:
@@ -66,7 +59,7 @@ func (hub *Hub) run(config Config) {
 			log.Println("hub.unregisterClient")
 			if _, ok := hub.clients[client]; ok {
 				// remove player if it is not in game
-				if player := hub.players[client.playerID]; player != nil {
+				if player := hub.arena.players[client.playerID]; player != nil {
 					// TODO: ...
 					log.Printf("unregister client: player: %v", player.Alias)
 				}
@@ -75,7 +68,7 @@ func (hub *Hub) run(config Config) {
 			}
 
 		case client := <-hub.chWaitClient:
-			if player := hub.players[client.playerID]; player != nil {
+			if player := hub.arena.players[client.playerID]; player != nil {
 				go func() {
 					if player.waitingForClient {
 						player.chWaitClient <- client
@@ -83,10 +76,22 @@ func (hub *Hub) run(config Config) {
 					if client.wasConnected {
 						hub.resendMissedMessages(player.ID, player.missedMessages)
 					} else {
-						hub.excludePlayerFromAllGames(player)
+						hub.arena.excludePlayerFromAllGames(player)
 					}
 				}()
 				player.missedMessages = []MissedMessage{}
+			}
+
+		case action := <-hub.chAction:
+
+			switch action.name {
+			case "arena_info":
+				info := hub.arena.info()
+				js, _ := json.Marshal(info)
+				hub.chBroadcast <- Broadcast{
+					playersID: []string{action.fromPlayerID},
+					message:   js,
+				}
 			}
 
 		case broadcast := <-hub.chBroadcast:
@@ -98,7 +103,7 @@ func (hub *Hub) run(config Config) {
 				}(broadcast.msgNum)
 			}
 			for _, playerID := range broadcast.playersID {
-				if player := hub.players[playerID]; player != nil {
+				if player := hub.arena.players[playerID]; player != nil {
 					foundClient := false
 					for client := range hub.clients {
 						if playerID == client.playerID {
@@ -162,13 +167,13 @@ func (hub *Hub) onClientRegistered(c *Client) {
 	db, s := GetDatabaseSessionCopy()
 	defer s.Close()
 
-	player := hub.players[c.playerID]
+	player := hub.arena.players[c.playerID]
 
-	foundInhub := player != nil
+	foundInArena := player != nil
 
-	if foundInhub {
+	if foundInArena {
 		// player already exists and we were waiting for this client
-		log.Println("found player in hub", player.ID)
+		log.Println("found player in arena", player.ID)
 		log.Println("wait channel: ", player.chWaitClient)
 
 		go func(c *Client) {
@@ -176,7 +181,7 @@ func (hub *Hub) onClientRegistered(c *Client) {
 			hub.chWaitClient <- c
 		}(c)
 	} else {
-		log.Println("Not found player in hub")
+		log.Println("Not found player in arena")
 		err := db.C("players").FindId(c.playerID).One(&player)
 		if err != nil && c.deviceUUID != nil {
 			log.Printf("Searching for playerId: %v by device uuid: %v\n", c.playerID, *c.deviceUUID)
@@ -207,17 +212,17 @@ func (hub *Hub) onClientRegistered(c *Client) {
 			db.C("players").Insert(player)
 		}
 
-		hub.players[player.ID] = player
+		hub.arena.players[player.ID] = player
 	}
 
 	js, err := json.Marshal(struct {
-		MsgFunc    string  `json:"msg_func"`
-		Player     *Player `json:"player"`
-		FoundInhub bool    `json:"found_in_hub"`
+		MsgFunc      string  `json:"msg_func"`
+		Player       *Player `json:"player"`
+		FoundInArena bool    `json:"found_in_arena"`
 	}{
-		MsgFunc:    "player_stat",
-		Player:     player,
-		FoundInhub: foundInhub,
+		MsgFunc:      "player_stat",
+		Player:       player,
+		FoundInArena: foundInArena,
 	})
 
 	if err != nil {
@@ -229,14 +234,9 @@ func (hub *Hub) onClientRegistered(c *Client) {
 		message:   js,
 	}
 
-	if !foundInhub {
+	if !foundInArena {
 		hub.chProcessDiff <- true
 	}
-}
-
-func (hub *Hub) excludePlayerFromAllGames(player *Player) {
-	color.Yellow("Exclude player %v from all games", player.Alias)
-	// TODO...
 }
 
 func (hub *Hub) resendMissedMessages(playerID string, missedMessages []MissedMessage) {
@@ -276,6 +276,7 @@ func (hub *Hub) ServeWs(w http.ResponseWriter, r *http.Request) {
 	var cookieWasConnected, _ = r.Cookie("wasConnected")
 	var cookieDeviceUUID, _ = r.Cookie("deviceUUID")
 	var cookieVersion, _ = r.Cookie("version")
+	var cookieGameId, _ = r.Cookie("gameId")
 
 	wasConnected := cookieWasConnected != nil && cookieWasConnected.Value == "true"
 	var deviceUUID *string
@@ -288,10 +289,24 @@ func (hub *Hub) ServeWs(w http.ResponseWriter, r *http.Request) {
 		version, _ = strconv.Atoi(cookieVersion.Value)
 	}
 
-	client := &Client{hub: hub, conn: conn, playerID: cookiePlayerId.Value, wasConnected: wasConnected, version: version, deviceUUID: deviceUUID, send: make(chan []byte, 256)}
+	var gameId *string
+	if cookieGameId != nil {
+		gameId = &cookieGameId.Value
+	}
+
+	client := &Client{
+		hub:          hub,
+		conn:         conn,
+		playerID:     cookiePlayerId.Value,
+		gameId:       gameId,
+		wasConnected: wasConnected,
+		version:      version,
+		deviceUUID:   deviceUUID,
+		send:         make(chan []byte, 256),
+	}
 	log.Println("Created client")
 
-	client.hub.chRegisterClient <- client
+	hub.chRegisterClient <- client
 	log.Println("Registered client")
 
 	// Allow collection of memory referenced by the caller by doing all work in

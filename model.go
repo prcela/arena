@@ -17,3 +17,11 @@ type Broadcast struct {
 	message   []byte
 	msgNum    int32
 }
+
+
+type Action struct {
+	name         string
+	message      []byte
+	fromPlayerID string
+	msgNum       int32
+}

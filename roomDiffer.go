@@ -26,7 +26,7 @@ func (differ *RoomDiffer) diff(hub *Hub) []byte {
 	differ.removedPlayersID = []string{}
 
 	// collect changed objects
-	for pID, p := range hub.players {
+	for pID, p := range hub.arena.players {
 		if p != nil && p.changed {
 			differ.players[pID] = p
 			p.changed = false

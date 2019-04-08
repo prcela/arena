@@ -10,5 +10,5 @@ var sessionErr error
 // GetDatabaseSessionCopy create a copy of opened session
 func GetDatabaseSessionCopy() (*mgo.Database, *mgo.Session) {
 	sessionCopy := session.Copy()
-	return sessionCopy.DB("kolo"), sessionCopy
+	return sessionCopy.DB("arena"), sessionCopy
 }
