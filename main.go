@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
@@ -90,8 +91,17 @@ func main() {
 
 	})
 
-	http.HandleFunc("/server_event", func(w http.ResponseWriter, req *http.Request) {
-		log.Println("request", req)
+	http.HandleFunc("/server_event", func(w http.ResponseWriter, r *http.Request) {
+		log.Println("request", r)
+		buf, bodyErr := ioutil.ReadAll(r.Body)
+		r.Body.Close()
+
+		if bodyErr != nil {
+			log.Print("bodyErr ", bodyErr.Error())
+			http.Error(w, bodyErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		log.Printf("%s\n", buf)
 	})
 
 	http.ListenAndServe(config.Addr, nil)
