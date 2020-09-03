@@ -3,12 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"gopkg.in/mgo.v2"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"runtime"
+
+	"gopkg.in/mgo.v2"
 )
 
 func loadConfiguration() Config {
@@ -87,6 +88,10 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(js)
 
+	})
+
+	http.HandleFunc("/server_event", func(w http.ResponseWriter, req *http.Request) {
+		log.Println("request", req)
 	})
 
 	http.ListenAndServe(config.Addr, nil)
